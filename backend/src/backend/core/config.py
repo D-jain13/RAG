@@ -1,12 +1,45 @@
-from pydantic_settings import BaseSettings,SettingsConfigDict
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
-    database_url:str
-    model_config=SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore"
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
+    database_url: str
+    db_pool_size: int = Field(default=10, ge=1)
+    db_max_overflow: int = Field(default=10, ge=0)
+    db_echo: bool = False
+
+    openrouter_api_key: str
+    chat_model: str = "openrouter/free"
+
+    upload_root: Path = Path("data/uploads")
+    max_upload_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
+    read_chunk_size: int = Field(default=1024 * 1024, gt=0)
+    copy_chunk_size: int = Field(default=1024 * 1024, gt=0)
+    pdf_max_pages: int = Field(default=2000,gt=0)
+    pending_sweep_after_seconds: int = Field(default=300, gt=0)
+    allowed_extensions: frozenset[str] = frozenset(
+        {".pdf", ".docx", ".txt", ".csv", ".xlsx", ".md"}
+    )
+
+    # @property
+    # def procrastinate_dsn(self) -> str:
+    #     """libpq DSN for Procrastinate (psycopg): same DB, no SQLAlchemy driver suffix."""
+    #     return self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+    @property
+    def procrastinate_dsn(self) -> str:
+        """libpq DSN for Procrastinate (psycopg)."""
+        dsn = self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        return dsn.replace("@localhost:", "@127.0.0.1:", 1)
+
+
+@lru_cache
 def get_settings() -> Settings:
     return Settings()
