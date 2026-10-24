@@ -1,6 +1,29 @@
+# services:
+#   db:
+#     image: pgvector/pgvector:pg18-trixie
+#     environment:
+#       POSTGRES_DB: ${POSTGRES_DB}
+#       POSTGRES_USER: ${POSTGRES_USER}
+#       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+#     ports:
+#       - "127.0.0.1:5433:5432"
+#     volumes:
+#       - postgres_data:/var/lib/postgresql/
+#     healthcheck:
+#       test: ["CMD-SHELL", "pg_isready -U rag_user -d rag_app"]
+#       interval: 5s
+#       timeout: 5s
+#       retries: 5
+
+# volumes:
+#   postgres_data:
+
 services:
   db:
-    image: pgvector/pgvector:pg18-trixie
+    build:
+      context: .
+      dockerfile: Dockerfile.db
+    command: ["postgres", "-c", "shared_preload_libraries=pg_textsearch"]
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
