@@ -16,13 +16,13 @@ export function Input({ label, error, helper, className, ...props }: InputProps)
       )}
       <input
         className={[
-          'w-full rounded-lg border px-3.5 py-2 text-sm bg-white text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:opacity-50 disabled:cursor-not-allowed',
-          error ? 'border-error-500 focus:ring-error-100 focus:border-error-500' : 'border-neutral-300 focus:border-brand-500',
+          'w-full rounded-lg border px-3.5 py-2 text-sm bg-white text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed',
+          error ? 'border-rose-500 focus:ring-rose-100 focus:border-rose-500' : 'border-neutral-300 focus:border-indigo-500',
           className,
         ].filter(Boolean).join(' ')}
         {...props}
       />
-      {error && <p className="mt-1 text-sm text-error-600">{error}</p>}
+      {error && <p className="mt-1 text-sm text-rose-600">{error}</p>}
       {helper && !error && <p className="mt-1 text-sm text-neutral-500">{helper}</p>}
     </div>
   )

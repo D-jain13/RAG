@@ -6,8 +6,14 @@ const BASE_URL = '/api/v1'
 class ApiClient {
   private client: AxiosInstance
   private tenantId: string | null = null
+  private listeners = new Set<() => void>()
 
   constructor() {
+    try {
+      this.tenantId = localStorage.getItem('tenant_id')
+    } catch {
+      /* storage unavailable */
+    }
     this.client = axios.create({
       baseURL: BASE_URL,
       headers: {
@@ -35,7 +41,22 @@ class ApiClient {
   }
 
   setTenantId(tenantId: string | null) {
+    if (this.tenantId === tenantId) return
     this.tenantId = tenantId
+    try {
+      if (tenantId) localStorage.setItem('tenant_id', tenantId)
+      else localStorage.removeItem('tenant_id')
+    } catch {
+      /* storage unavailable */
+    }
+    this.listeners.forEach((l) => l())
+  }
+
+  subscribeTenant = (listener: () => void) => {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
   }
 
   getTenantId(): string | null {
@@ -73,6 +94,11 @@ class ApiClient {
     return response.data
   }
 
+  async listDocuments(params?: { status?: string; limit?: number; offset?: number }): Promise<DocumentListResponse> {
+    const response = await this.client.get<DocumentListResponse>('/documents', { params })
+    return response.data
+  }
+
   async testParser(file: File): Promise<any> {
     const formData = new FormData()
     formData.append('file', file)
@@ -102,6 +128,21 @@ export interface DocumentOut {
   size_bytes: number
   status: string
   duplicate_of: string | null
+}
+
+export interface DocumentListItem extends DocumentOut {
+  content_type: string | null
+  similarity: number | null
+  failure_reason: string | null
+  created_at: string
+  processed_at: string | null
+}
+
+export interface DocumentListResponse {
+  items: DocumentListItem[]
+  total: number
+  limit: number
+  offset: number
 }
 
 export interface UploadResponse {

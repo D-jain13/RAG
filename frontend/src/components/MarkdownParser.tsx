@@ -50,7 +50,7 @@ export function MarkdownParser({ content }: MarkdownParserProps) {
       // Links
       html = html.replace(
         /\[([^\]]+)\]\(([^)]+)\)/gim,
-        '<a href="$2" target="_blank" rel="noopener" class="text-primary-600 underline">$1</a>'
+        '<a href="$2" target="_blank" rel="noopener" class="text-indigo-600 underline">$1</a>'
       )
 
       // Unordered lists

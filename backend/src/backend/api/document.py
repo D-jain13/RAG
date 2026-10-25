@@ -1,7 +1,10 @@
 import asyncio
 import logging
 import uuid
+from datetime import datetime
 from pathlib import PurePath
+
+from fastapi import Query
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel, ConfigDict
@@ -14,6 +17,7 @@ from backend.pipeline.upload import ingest_upload
 from backend.storage.storage import LocalStorage, get_storage
 from backend.parser import parse_file_async
 from backend.parser.parsing_errors import EmptyDocument, UnsupportedFileType
+from sqlalchemy import func, select
 from backend.utils.chunking import chunk_markdown
 from backend.utils.hashing import spool_and_hash, text_sha256
 from backend.utils.minhash import (
@@ -25,6 +29,8 @@ from backend.utils.minhash import (
 )
 from backend.utils.normalise import normalize_text
 from backend.worker.tasks import enqueue_process_document
+from backend.enum.document_status import DocumentStatus
+from backend.models.document import Document
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +50,19 @@ class UploadResponse(BaseModel):
     document: DocumentOut
     already_exists: bool
 
+class DocumentListItem(DocumentOut):
+    content_type: str | None = None
+    similarity: float | None = None
+    failure_reason: str | None = None
+    created_at: datetime
+    processed_at: datetime | None = None
+
+
+class DocumentListResponse(BaseModel):
+    items: list[DocumentListItem]
+    total: int
+    limit: int
+    offset: int
 
 @router.post("", response_model=UploadResponse, status_code=201)
 async def upload_document(
@@ -85,6 +104,61 @@ async def upload_document(
 
     return UploadResponse(document=result.document, already_exists=not result.created)
 
+
+
+@router.get("", response_model=DocumentListResponse)
+async def list_documents(
+    status: DocumentStatus | None = Query(None, description="Filter by processing status"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    filters = [Document.tenant_id == tenant_id]
+    if status:
+        filters.append(Document.status == status)
+
+    total = await db.scalar(
+        select(func.count()).select_from(Document).where(*filters)
+    )
+
+    rows = (
+        await db.execute(
+            select(Document)
+            .where(*filters)
+            .order_by(Document.created_at.desc(), Document.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    ).scalars().all()
+
+    return DocumentListResponse(
+        items=[DocumentListItem.model_validate(r) for r in rows],
+        total=total or 0,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/{document_id}", response_model=DocumentListItem)
+async def get_document(
+    document_id: uuid.UUID,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    doc = (
+        await db.execute(
+            select(Document).where(
+                Document.id == document_id,
+                Document.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if doc is None:
+        # 404 (not 403) so we never reveal that another tenant owns this ID
+        raise HTTPException(404, "Document not found")
+    return DocumentListItem.model_validate(doc)
 
 @router.post("/test-parser")
 async def upload_document_test(

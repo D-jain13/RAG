@@ -7,7 +7,7 @@ export function Spinner({
 }) {
   return (
     <div className="flex items-center justify-center" role="status" aria-label={label}>
-      <div className={`animate-spin rounded-full border-2 border-neutral-200 border-t-brand-600 ${className}`}>
+      <div className={`animate-spin rounded-full border-2 border-neutral-200 border-t-indigo-600 ${className}`}>
         <span className="sr-only">{label}</span>
       </div>
     </div>

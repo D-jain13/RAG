@@ -1,14 +1,14 @@
-
-import { useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
+import { api } from "../api/client";
+import { useTenants } from "../hooks/useTenant";
 
 const navigation = [
   {
-    label: 'Chat',
-    description: 'Ask your knowledge base',
-    to: '/',
+    label: "Chat",
+    description: "Ask your knowledge base",
+    to: "/",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <path d="M8 10h8M8 14h5" />
@@ -17,9 +17,9 @@ const navigation = [
     ),
   },
   {
-    label: 'Documents',
-    description: 'Manage your knowledge',
-    to: '/documents',
+    label: "Documents",
+    description: "Manage your knowledge",
+    to: "/documents",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10Z" />
@@ -28,9 +28,9 @@ const navigation = [
     ),
   },
   {
-    label: 'Tenants',
-    description: 'Manage workspaces',
-    to: '/tenants',
+    label: "Tenants",
+    description: "Manage workspaces",
+    to: "/tenants",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <rect x="4" y="3" width="16" height="18" rx="2" />
@@ -38,36 +38,37 @@ const navigation = [
       </svg>
     ),
   },
-]
+];
 
 export default function Layout() {
-  const [mobileOpen, setMobileOpen] = useState(false)
-  const location = useLocation()
-  const queryClient = useQueryClient()
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const location = useLocation();
+  const queryClient = useQueryClient();
 
-  const { data: tenants = [], isLoading: tenantsLoading } = useQuery({
-    queryKey: ['tenants'],
-    queryFn: () => api.listTenants(),
-  })
-
-  const activeTenantId = api.getTenantId() || ''
+  const {
+    tenants,
+    isLoading: tenantsLoading,
+    tenantId: activeTenantId = "",
+  } = useTenants();
 
   const activeTenant = tenants.find(
     (tenant) => tenant.tenant_id === activeTenantId,
-  )
+  );
 
   const page = navigation.find((item) =>
-    item.to === '/'
-      ? location.pathname === '/'
+    item.to === "/"
+      ? location.pathname === "/"
       : location.pathname.startsWith(item.to),
-  )
+  );
 
   const changeTenant = (tenantId: string) => {
-    api.setTenantId(tenantId || null)
-    queryClient.invalidateQueries()
-  }
+    api.setTenantId(tenantId || null);
+    queryClient.invalidateQueries({
+      predicate: (q) => q.queryKey[0] !== "tenants",
+    });
+  };
 
-  const closeMobile = () => setMobileOpen(false)
+  const closeMobile = () => setMobileOpen(false);
 
   return (
     <div className="min-h-screen bg-[#f8f9fc] text-slate-900">
@@ -82,7 +83,7 @@ export default function Layout() {
 
       <aside
         className={`fixed inset-y-0 left-0 z-50 flex w-[264px] flex-col border-r border-slate-200/80 bg-white transition-transform duration-200 lg:translate-x-0 ${
-          mobileOpen ? 'translate-x-0' : '-translate-x-full'
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div className="flex h-[76px] items-center gap-3 border-b border-slate-100 px-6">
@@ -101,10 +102,7 @@ export default function Layout() {
           </div>
           <div>
             <p className="text-[16px] font-bold tracking-tight text-slate-900">
-              Atlas AI
-            </p>
-            <p className="mt-0.5 text-[11px] font-medium tracking-wide text-slate-400">
-              KNOWLEDGE WORKSPACE
+              Multi-Tenant RAG System
             </p>
           </div>
         </div>
@@ -119,13 +117,13 @@ export default function Layout() {
               <NavLink
                 key={item.to}
                 to={item.to}
-                end={item.to === '/'}
+                end={item.to === "/"}
                 onClick={closeMobile}
                 className={({ isActive }) =>
                   `group flex items-center gap-3 rounded-xl px-3 py-3 transition-all ${
                     isActive
-                      ? 'bg-indigo-50 text-indigo-700'
-                      : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                      ? "bg-indigo-50 text-indigo-700"
+                      : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                   }`
                 }
               >
@@ -134,8 +132,8 @@ export default function Layout() {
                     <span
                       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
                         isActive
-                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                          : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200'
+                          ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                          : "bg-slate-100 text-slate-500 group-hover:bg-slate-200"
                       }`}
                     >
                       <span className="h-[19px] w-[19px] [&>svg]:h-full [&>svg]:w-full [&>svg]:stroke-[1.7]">
@@ -148,7 +146,7 @@ export default function Layout() {
                       </span>
                       <span
                         className={`mt-0.5 block truncate text-[11px] ${
-                          isActive ? 'text-indigo-500' : 'text-slate-400'
+                          isActive ? "text-indigo-500" : "text-slate-400"
                         }`}
                       >
                         {item.description}
@@ -190,13 +188,13 @@ export default function Layout() {
 
             <select
               aria-label="Active tenant"
-              value={activeTenantId}
+              value={activeTenantId ?? ""}
               onChange={(event) => changeTenant(event.target.value)}
               disabled={tenantsLoading}
               className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100 disabled:opacity-60"
             >
               <option value="">
-                {tenantsLoading ? 'Loading workspaces...' : 'Select workspace'}
+                {tenantsLoading ? "Loading workspaces..." : "Select workspace"}
               </option>
               {tenants.map((tenant) => (
                 <option key={tenant.tenant_id} value={tenant.tenant_id}>
@@ -208,11 +206,11 @@ export default function Layout() {
             <div className="mt-3 flex items-center gap-2">
               <span
                 className={`h-1.5 w-1.5 rounded-full ${
-                  activeTenant ? 'bg-emerald-500' : 'bg-amber-500'
+                  activeTenant ? "bg-emerald-500" : "bg-amber-500"
                 }`}
               />
               <span className="truncate text-[11px] text-slate-500">
-                {activeTenant?.name || 'No workspace selected'}
+                {activeTenant?.name || "No workspace selected"}
               </span>
             </div>
           </div>
@@ -255,10 +253,10 @@ export default function Layout() {
             </button>
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-800">
-                {page?.label || 'Workspace'}
+                {page?.label || "Workspace"}
               </p>
               <p className="mt-0.5 hidden text-[11px] text-slate-400 sm:block">
-                {activeTenant?.name || 'Select a workspace to get started'}
+                {activeTenant?.name || "Select a workspace to get started"}
               </p>
             </div>
           </div>
@@ -279,5 +277,5 @@ export default function Layout() {
         </main>
       </div>
     </div>
-  )
+  );
 }

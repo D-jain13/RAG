@@ -26,7 +26,7 @@ export function Button({
 
   const variants: Record<string, string> = {
     primary:
-      'bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-700 shadow-sm',
+      'bg-indigo-600 text-white hover:bg-indigo-700 active:bg-indigo-700 shadow-sm',
     secondary:
       'bg-white text-neutral-700 border border-neutral-300 hover:bg-neutral-50 active:bg-neutral-50 shadow-sm',
     ghost:

@@ -1,160 +1,274 @@
-import { useState, useEffect, useRef } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
+import toast from 'react-hot-toast'
 import { api } from '../api/client'
+import type { Source } from '../api/client'
 import { MarkdownParser } from '../components/MarkdownParser'
 import { SourceCitation } from '../components/SourceCitation'
 import { TenantGuard } from '../components/TenantGuard'
+import { useTenantId } from '../hooks/useTenant'
+
+interface Message {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  sources?: Source[]
+  error?: boolean
+  question?: string
+}
+
+const SUGGESTIONS = [
+  'Summarize the key points across my documents',
+  'What are the main topics covered?',
+  'List any deadlines, dates or numbers mentioned',
+]
+
+const Sparkle = () => (
+  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18" strokeLinecap="round" />
+  </svg>
+)
+
+function errorText(err: unknown) {
+  const detail = (err as any)?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  return err instanceof Error ? err.message : 'Something went wrong'
+}
 
 export default function Chat() {
+  const tenantId = useTenantId()
+  const [messages, setMessages] = useState<Message[]>([])
   const [question, setQuestion] = useState('')
-  const [streaming, setStreaming] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const queryClient = useQueryClient()
-  const messagesRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([])
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const nextId = useRef(1)
 
-  const { data: chatData, isPending: chatPending } = useQuery({
-    queryKey: ['chat'],
-    queryFn: async () => {
-      if (!messagesRef.current.length) return null
-      const lastUserMessage =
-        messagesRef.current[messagesRef.current.length - 1]
-      if (!lastUserMessage || lastUserMessage.role !== 'user') return null
-      return api.chat(lastUserMessage.content)
-    },
-    enabled: messagesRef.current.length > 0,
-    retry: false,
-  })
+  const chatMutation = useMutation({ mutationFn: (q: string) => api.chat(q) })
+  const pending = chatMutation.isPending
 
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!question.trim() || streaming) return
+  // New workspace = new conversation
+  useEffect(() => {
+    setMessages([])
+  }, [tenantId])
 
-    const userMessage = question.trim()
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+  }, [messages, pending])
+
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }, [question])
+
+  const ask = (text: string) => {
+    const q = text.trim()
+    if (!q || pending) return
     setQuestion('')
-    messagesRef.current.push({ role: 'user', content: userMessage })
-    setStreaming(true)
+    setMessages((m) => [...m, { id: nextId.current++, role: 'user', content: q }])
+    chatMutation.mutate(q, {
+      onSuccess: (res) =>
+        setMessages((m) => [
+          ...m,
+          { id: nextId.current++, role: 'assistant', content: res.answer, sources: res.sources },
+        ]),
+      onError: (err) =>
+        setMessages((m) => [
+          ...m,
+          { id: nextId.current++, role: 'assistant', content: errorText(err), error: true, question: q },
+        ]),
+    })
+  }
 
+  const retry = (msg: Message) => {
+    if (!msg.question) return
+    setMessages((m) => m.filter((x) => x.id !== msg.id))
+    chatMutation.mutate(msg.question, {
+      onSuccess: (res) =>
+        setMessages((m) => [
+          ...m,
+          { id: nextId.current++, role: 'assistant', content: res.answer, sources: res.sources },
+        ]),
+      onError: (err) =>
+        setMessages((m) => [
+          ...m,
+          { id: nextId.current++, role: 'assistant', content: errorText(err), error: true, question: msg.question },
+        ]),
+    })
+  }
+
+  const copy = async (text: string) => {
     try {
-      const response = await api.chat(userMessage)
-      messagesRef.current.push({
-        role: 'assistant',
-        content: response.answer,
-      })
-    } catch (err) {
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : 'Something went wrong'
-      messagesRef.current.push({
-        role: 'assistant',
-        content: `Error: ${errorMessage}`,
-      })
-    } finally {
-      setStreaming(false)
+      await navigator.clipboard.writeText(text)
+      toast.success('Copied to clipboard')
+    } catch {
+      toast.error('Could not copy')
     }
   }
 
-  const scrollToBottom = () => {
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      ask(question)
+    }
   }
-
-  useEffect(() => {
-    scrollToBottom()
-  }, [messagesRef.current])
 
   return (
     <TenantGuard>
-      <div className="max-w-4xl mx-auto">
-        <header className="mb-8">
-          <h2 className="text-2xl font-semibold text-neutral-900">Chat</h2>
-          <p className="text-neutral-600 mt-1">Ask questions about your documents</p>
-        </header>
+      <div className="mx-auto flex h-[calc(100vh-10.5rem)] min-h-[460px] max-w-3xl flex-col">
+        <div className="mb-4 flex items-end justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Chat</h2>
+            <p className="mt-1 text-sm text-slate-500">Ask questions about your documents</p>
+          </div>
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setMessages([])}
+              disabled={pending}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              New chat
+            </button>
+          )}
+        </div>
 
-        <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
-          {/* Messages */}
-          <div className="p-6 max-h-[60vh] overflow-y-auto space-y-6">
-            {messagesRef.current.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex gap-3 ${
-                  msg.role === 'user' ? 'flex-row-reverse' : ''
-                }`}
-              >
-                <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0">
-                  {msg.role === 'user' ? (
-                    <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2h1c1.1 0 2-.9 2-2v-1l.21 1.79c.13.58.21 1.17.21 1.79 0 4.08-3.05 7.44-7 7.93z" />
-                    </svg>
-                  ) : (
-                    <svg className="w-4 h-4 text-primary-600" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2L1 21h22L12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
-                    </svg>
-                  )}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div ref={scrollRef} className="flex-1 space-y-6 overflow-y-auto px-4 py-6 sm:px-6">
+            {messages.length === 0 && !pending && (
+              <div className="flex h-full flex-col items-center justify-center text-center">
+                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/20">
+                  <Sparkle />
                 </div>
-                <div
-                  className={`max-w-[85%] ${
-                    msg.role === 'user'
-                      ? 'bg-primary-600 text-white rounded-xl rounded-tr-none p-3 text-sm'
-                      : 'bg-neutral-100 text-neutral-900 rounded-xl rounded-tl-none p-3 text-sm prose-chat'
-                  }`}
-                >
-                  {msg.role === 'assistant' ? (
-                    <MarkdownParser content={msg.content} />
-                  ) : (
-                    msg.content
-                  )}
-                </div>
-              </div>
-            ))}
-            {streaming && (
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0">
-                  <svg className="w-4 h-4 text-primary-600" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 2L1 21h22L12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
-                  </svg>
-                </div>
-                <div className="bg-neutral-100 text-neutral-900 rounded-xl rounded-tl-none p-3 text-sm animate-pulse">
-                  <span className="w-3 h-3 rounded-full bg-neutral-500 inline-block mr-1"></span>Thinking...
+                <h3 className="text-lg font-semibold text-slate-900">How can I help?</h3>
+                <p className="mt-1 max-w-sm text-sm text-slate-500">
+                  Answers are grounded in the documents of your active workspace, with sources.
+                </p>
+                <div className="mt-6 flex w-full max-w-md flex-col gap-2">
+                  {SUGGESTIONS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => ask(s)}
+                      className="rounded-xl border border-slate-200 px-4 py-2.5 text-left text-sm text-slate-600 transition hover:border-indigo-200 hover:bg-indigo-50/60 hover:text-indigo-700"
+                    >
+                      {s}
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
-            <div ref={messagesEndRef} />
+
+            {messages.map((msg) =>
+              msg.role === 'user' ? (
+                <div key={msg.id} className="flex justify-end">
+                  <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-indigo-600 px-4 py-2.5 text-sm text-white shadow-sm">
+                    {msg.content}
+                  </div>
+                </div>
+              ) : (
+                <div key={msg.id} className="group flex gap-3">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100">
+                    <Sparkle />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    {msg.error ? (
+                      <div className="rounded-2xl rounded-tl-md border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                        <p>{msg.content}</p>
+                        <button
+                          type="button"
+                          onClick={() => retry(msg)}
+                          disabled={pending}
+                          className="mt-2 text-xs font-semibold underline underline-offset-2 disabled:opacity-50"
+                        >
+                          Try again
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="rounded-2xl rounded-tl-md bg-slate-50 px-4 py-1 text-sm text-slate-800 ring-1 ring-slate-100">
+                          <MarkdownParser content={msg.content} />
+                        </div>
+                        {msg.sources && msg.sources.length > 0 && (
+                          <div className="mt-3">
+                            <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                              Sources
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {msg.sources.map((s) => (
+                                <SourceCitation key={s.ref} source={s} />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => copy(msg.content)}
+                          className="mt-2 text-[11px] font-medium text-slate-400 opacity-0 transition hover:text-slate-700 focus:opacity-100 group-hover:opacity-100"
+                        >
+                          Copy
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ),
+            )}
+
+            {pending && (
+              <div className="flex gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100">
+                  <Sparkle />
+                </div>
+                <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-md bg-slate-50 px-4 py-3.5 ring-1 ring-slate-100">
+                  {[0, 150, 300].map((d) => (
+                    <span
+                      key={d}
+                      className="h-1.5 w-1.5 animate-bounce rounded-full bg-indigo-400"
+                      style={{ animationDelay: `${d}ms` }}
+                    />
+                  ))}
+                  <span className="ml-2 text-xs text-slate-400">Searching your documents…</span>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Input */}
-          <div className="p-4 border-t border-neutral-200 bg-white">
-            <form onSubmit={sendMessage} className="flex gap-3">
-              <input
-                type="text"
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              ask(question)
+            }}
+            className="border-t border-slate-100 bg-white p-3 sm:p-4"
+          >
+            <div className="flex items-end gap-2 rounded-xl border border-slate-200 bg-white p-2 transition focus-within:border-indigo-400 focus-within:ring-4 focus-within:ring-indigo-100">
+              <textarea
+                ref={inputRef}
+                rows={1}
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
-                placeholder="Ask a question about your documents..."
-                className="flex-1 px-4 py-2 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-50"
-                disabled={streaming}
+                onKeyDown={onKeyDown}
+                maxLength={2000}
+                placeholder="Ask a question about your documents…"
+                className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-slate-900 outline-none placeholder:text-slate-400"
               />
               <button
                 type="submit"
-                disabled={!question.trim() || streaming}
-                className="bg-primary-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                disabled={!question.trim() || pending}
+                aria-label="Send"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-md shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
               >
-                {streaming ? 'Sending...' : 'Ask'}
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 19V5M5 12l7-7 7 7" />
+                </svg>
               </button>
-            </form>
-          </div>
-        </div>
-
-        {chatData?.sources.length && (
-          <div className="mt-4">
-            <h3 className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-2">
-              Sources
-            </h3>
-            <div className="flex gap-2 flex-wrap">
-              {chatData.sources.map((source) => (
-                <SourceCitation key={source.ref} source={source} />
-              ))}
             </div>
-          </div>
-        )}
+            <p className="mt-2 px-1 text-[11px] text-slate-400">
+              Enter to send · Shift+Enter for a new line
+            </p>
+          </form>
+        </div>
       </div>
     </TenantGuard>
   )

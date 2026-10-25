@@ -16,14 +16,14 @@ export function TenantGuard({ children }: TenantGuardProps) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-neutral-200 border-t-primary-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-2 border-neutral-200 border-t-indigo-600"></div>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="bg-error-50 border border-error-200 rounded-lg p-4 text-error-700 text-sm">
+      <div className="bg-rose-50 border border-rose-200 rounded-lg p-4 text-rose-700 text-sm">
         Failed to load tenants. Please try again later.
       </div>
     )
