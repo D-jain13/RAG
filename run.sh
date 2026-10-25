@@ -64,7 +64,9 @@ start_bg() {
 
 wait_for_url() {
   local url="$1" name="$2" tries="${3:-60}"
+  local pid="${PIDS[${#PIDS[@]}-1]}"
   for ((i = 0; i < tries; i++)); do
+    kill -0 "$pid" 2>/dev/null || die "$name process exited — see $LOG_DIR/$name.log"
     if curl -fsS -o /dev/null "$url" 2>/dev/null; then ok "$name is up at $url"; return 0; fi
     sleep 1
   done
@@ -151,7 +153,7 @@ ok "worker running"
 # ---------------------------------------------------------------- 7. backend
 step 7 "Start the backend API"
 start_bg backend "$BACKEND_DIR" uv run uvicorn backend.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
-wait_for_url "http://127.0.0.1:$BACKEND_PORT/ready" "backend"
+wait_for_url "http://localhost:$BACKEND_PORT/ready" "backend"
 
 # --------------------------------------------------------------- 8. frontend
 step 8 "Start the frontend"
@@ -160,7 +162,8 @@ if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
   (cd "$FRONTEND_DIR" && npm install)
 fi
 start_bg frontend "$FRONTEND_DIR" npm run dev
-wait_for_url "http://127.0.0.1:$FRONTEND_PORT" "frontend"
+# "localhost" (not 127.0.0.1): Vite may listen on IPv6 [::1] only
+wait_for_url "http://localhost:$FRONTEND_PORT" "frontend"
 
 printf '\n\033[1;32mAll services are running.\033[0m\n'
 printf '   App       http://localhost:%s\n' "$FRONTEND_PORT"
