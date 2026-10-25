@@ -12,7 +12,7 @@ from backend.models.chunk import Chunk
 from backend.models.document import Document
 from backend.pipeline.common import CHUNK_INSERT_BATCH, artifact_key
 from backend.pipeline.failure import fail_document
-from backend.utils.chunking import chunk_markdown
+from backend.utils.chunking import chunk_document
 
 log = logging.getLogger(__name__)
 
@@ -36,8 +36,11 @@ async def chunk_stage(
         f.close()
 
     chunks = await asyncio.to_thread(
-        chunk_markdown, normalized, {"filename": doc.filename}
+        chunk_document,
+        normalized,
+        doc.filename,
     )
+    
     if not chunks:
         await fail_document(document_id, "no chunks produced")
         return False

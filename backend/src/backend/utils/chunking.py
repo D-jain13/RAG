@@ -1,13 +1,22 @@
 # chunking/markdown_chunker.py
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
+import tiktoken
 from langchain_text_splitters import (
     MarkdownHeaderTextSplitter,
     RecursiveCharacterTextSplitter,
 )
 
 _HEADING_KEYS = ("h1", "h2", "h3", "h4")
+
+_encoding = tiktoken.get_encoding("cl100k_base")
+
+DEFAULT_ROWS_PER_CHUNK = 10
+MAX_CHUNK_TOKENS = 450
+
+_SHEET_RE = re.compile(r"^## Sheet: (.*)$")
 
 _header_splitter = MarkdownHeaderTextSplitter(
     headers_to_split_on=[("#", "h1"), ("##", "h2"), ("###", "h3"), ("####", "h4")],
@@ -32,6 +41,19 @@ class Chunk:
     @property
     def heading_path(self) -> str:
         return " > ".join(self.metadata[k] for k in _HEADING_KEYS if k in self.metadata)
+
+
+def chunk_document(
+    normalized: str,
+    filename: str,
+) -> list[Chunk]:
+    extension = filename.rsplit(".", 1)[-1].lower()
+    metadata = {"filename": filename}
+
+    if extension in {"csv", "xlsx"}:
+        return chunk_tabular(normalized, metadata)
+
+    return chunk_markdown(normalized, metadata)
 
 
 def _promote_title(md: str) -> str:
@@ -64,4 +86,73 @@ def chunk_markdown(md: str, base_metadata: dict[str, Any] | None = None) -> list
             chunk.embed_text = f"{chunk.heading_path}\n\n{body}"
         chunk.metadata["chunk_index"] = chunk.index
         chunks.append(chunk)
+    return chunks
+
+
+def chunk_tabular(
+    text: str,
+    base_metadata: dict[str, Any] | None = None,
+    rows_per_chunk: int = DEFAULT_ROWS_PER_CHUNK,
+    max_tokens: int = MAX_CHUNK_TOKENS,
+) -> list[Chunk]:
+    base = base_metadata or {}
+
+    chunks: list[Chunk] = []
+    sheet_name: str | None = None
+    rows: list[str] = []
+
+    def flush() -> None:
+        if not rows:
+            return
+
+        body = "\n".join(rows)
+        metadata = dict(base)
+
+        if sheet_name is not None:
+            metadata["sheet_name"] = sheet_name
+
+        metadata["chunk_index"] = len(chunks)
+        metadata["row_count"] = len(rows)
+
+        # Include sheet context in every XLSX chunk.
+        embed_text = (
+            f"Sheet: {sheet_name}\n\n{body}" if sheet_name is not None else body
+        )
+
+        chunks.append(
+            Chunk(
+                index=len(chunks),
+                text=body,
+                embed_text=embed_text,
+                metadata=metadata,
+            )
+        )
+        rows.clear()
+
+    for line in text.splitlines():
+        line = line.strip()
+
+        if not line:
+            continue
+
+        match = _SHEET_RE.match(line)
+        if match:
+            flush()
+            sheet_name = match.group(1).strip()
+            continue
+
+        candidate = "\n".join([*rows, line])
+        candidate_text = (
+            f"Sheet: {sheet_name}\n\n{candidate}"
+            if sheet_name is not None
+            else candidate
+        )
+        token_count = len(_encoding.encode(candidate_text))
+
+        if rows and (len(rows) >= rows_per_chunk or token_count > max_tokens):
+            flush()
+
+        rows.append(line)
+
+    flush()
     return chunks
