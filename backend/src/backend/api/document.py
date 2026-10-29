@@ -61,8 +61,9 @@ class DocumentListItem(DocumentOut):
 class DocumentListResponse(BaseModel):
     items: list[DocumentListItem]
     total: int
-    limit: int
-    offset: int
+    page: int
+    page_size: int
+    total_pages : int
 
 @router.post("", response_model=UploadResponse, status_code=201)
 async def upload_document(
@@ -109,14 +110,15 @@ async def upload_document(
 @router.get("", response_model=DocumentListResponse)
 async def list_documents(
     status: DocumentStatus | None = Query(None, description="Filter by processing status"),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    page: int = Query(1, ge=1, description="1-based page number"),
+    page_size: int = Query(10, ge=0,le=100,description="Items per page"),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     db: AsyncSession = Depends(get_db),
 ):
     filters = [Document.tenant_id == tenant_id]
-    if status:
-        filters.append(Document.status == status)
+
+    if status is not None:
+        filters.append(Document.status == status.value)
 
     total = await db.scalar(
         select(func.count()).select_from(Document).where(*filters)
@@ -127,16 +129,19 @@ async def list_documents(
             select(Document)
             .where(*filters)
             .order_by(Document.created_at.desc(), Document.id.desc())
-            .limit(limit)
-            .offset(offset)
+            .limit(page)
+            .offset((page-1) * page_size)
         )
     ).scalars().all()
+
+    total = total or 0
 
     return DocumentListResponse(
         items=[DocumentListItem.model_validate(r) for r in rows],
         total=total or 0,
-        limit=limit,
-        offset=offset,
+        page=page,
+        page_size=page_size,
+        total_pages=max(1,-(-total // page_size))
     )
 
 
@@ -159,6 +164,54 @@ async def get_document(
         # 404 (not 403) so we never reveal that another tenant owns this ID
         raise HTTPException(404, "Document not found")
     return DocumentListItem.model_validate(doc)
+
+
+@router.delete("/{document_id}", status_code=204)
+async def delete_document(
+    document_id: uuid.UUID,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db),
+    storage: LocalStorage = Depends(get_storage),
+):
+    doc = (
+        await db.execute(
+            select(Document).where(
+                Document.id == document_id,
+                Document.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if doc is None:
+        raise HTTPException(404, "Document not found")
+
+    storage_key = doc.storage_key
+    normalized_key = f"{storage_key}.normalized.md"
+
+    await db.execute(
+        delete(Chunk).where(
+            Chunk.document_id == document_id,
+            Chunk.tenant_id == tenant_id,
+        )
+    )
+    await db.execute(
+        delete(LshBand).where(LshBand.document_id == document_id)
+    )
+    await db.execute(
+        delete(Document).where(Document.id == document_id)
+    )
+    await db.commit()
+
+    # The file is keyed by (tenant, sha256), which is unique, so no other row shares it.
+    for key in (storage_key, normalized_key):
+        try:
+            await storage.delete(key)
+        except Exception:
+            log.exception(
+                "failed to delete stored file %s",
+                storage_key,
+            )
+
 
 @router.post("/test-parser")
 async def upload_document_test(

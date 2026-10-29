@@ -4,18 +4,13 @@ import os
 
 import httpx
 import numpy as np
-from dotenv import load_dotenv
+from backend.core.config import get_settings
 
-load_dotenv()
+setting = get_settings()
 
-MODEL_NAME = "@cf/baai/bge-m3"
-EMBED_DIM = 1024
-BATCH_SIZE = 32  
-MAX_RETRIES = 4
 
-_ACCOUNT = os.environ["CLOUDFLARE_ACCOUNT_ID"]
-_URL = f"https://api.cloudflare.com/client/v4/accounts/{_ACCOUNT}/ai/run/{MODEL_NAME}"
-_HEADERS = {"Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}"}
+_URL = f"https://api.cloudflare.com/client/v4/accounts/{setting.cloudflare_account_id}/ai/run/{setting.embed_model_name}"
+_HEADERS = {"Authorization": f"Bearer {setting.cloudflare_api_token}"}
 
 _client = httpx.AsyncClient(timeout=60, headers=_HEADERS)
 _sem = asyncio.Semaphore(4)  # concurrent requests
@@ -23,7 +18,7 @@ _sem = asyncio.Semaphore(4)  # concurrent requests
 
 async def _embed_batch(texts: list[str]) -> np.ndarray:
     payload = {"text": texts, "truncate_inputs": True}
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(setting.max_retries):
         async with _sem:
             r = await _client.post(_URL, json=payload)
         if r.status_code == 429 or r.status_code >= 500:
@@ -39,11 +34,11 @@ async def _embed_batch(texts: list[str]) -> np.ndarray:
 
 async def aembed_texts(texts: list[str]) -> np.ndarray:
     if not texts:
-        return np.empty((0, EMBED_DIM), dtype=np.float32)
+        return np.empty((0, setting.embed_dim), dtype=np.float32)
     parts = await asyncio.gather(
         *(
-            _embed_batch(texts[i : i + BATCH_SIZE])
-            for i in range(0, len(texts), BATCH_SIZE)
+            _embed_batch(texts[i : i + setting.batch_size])
+            for i in range(0, len(texts), setting.batch_size)
         )
     )
     v = np.vstack(parts)

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, String, func, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, String, func, text,UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,4 +26,5 @@ class Tenant(Base):
             "length(trim(name)) > 0",
             name="ck_tenants_name_not_empty",
         ),
+        UniqueConstraint("name",name="uq_tenants_name")
     )

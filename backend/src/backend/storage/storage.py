@@ -51,6 +51,15 @@ class LocalStorage:
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self._path(key).unlink, True)
 
+    def _delete_tenant_sync(self,tenant_id:uuid.UUID)-> None:
+        tenant_path = self._path(f"tenants/{tenant_id}")
+        shutil.rmtree(
+            tenant_path,ignore_errors=False
+        ) if tenant_path.exists() else None
+
+    async def delete_tenant(self,tenant_id:uuid.UUID)-> None:
+        await asyncio.to_thread(self,self._delete_tenant_sync,tenant_id)
+    
     def open(self, key: str) -> BinaryIO:
         return open(self._path(key), "rb")
 

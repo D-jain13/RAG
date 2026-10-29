@@ -25,7 +25,7 @@ _header_splitter = MarkdownHeaderTextSplitter(
 
 _recursive = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
     encoding_name="cl100k_base",
-    chunk_size=450,
+    chunk_size=MAX_CHUNK_TOKENS,
     chunk_overlap=50,
     separators=["\n\n", "\n", ". ", " ", ""],
 )
@@ -40,7 +40,10 @@ class Chunk:
 
     @property
     def heading_path(self) -> str:
-        return " > ".join(self.metadata[k] for k in _HEADING_KEYS if k in self.metadata)
+        path = " > ".join(self.metadata[k] for k in _HEADING_KEYS if k in self.metadata)
+        if not path and self.metadata.get("sheet_name"):
+            return f"Sheet: {self.metadata['sheet_name']}"
+        return path
 
 
 def chunk_document(

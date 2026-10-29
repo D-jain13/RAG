@@ -64,8 +64,13 @@ class ApiClient {
   }
 
   // Tenant endpoints
+  async listTenantsPage(params: { page: number; page_size: number}): Promise<TenantListResponse> {
+    const response = await this.client.get<TenantListResponse>('/tenants',{params})
+    return response.data
+  }
+
   async listTenants(): Promise<any[]> {
-    const response = await this.client.get<any[]>('/tenants')
+    const response = await this.client.get<any[]>('/tenants/all')
     return response.data
   }
 
@@ -94,9 +99,13 @@ class ApiClient {
     return response.data
   }
 
-  async listDocuments(params?: { status?: string; limit?: number; offset?: number }): Promise<DocumentListResponse> {
+  async listDocuments(params?: { status?: string; page?: number; page_size?: number }): Promise<DocumentListResponse> {
     const response = await this.client.get<DocumentListResponse>('/documents', { params })
     return response.data
+  }
+
+  async deleteDocument(documentId : string): Promise<void>{
+    await this.client.delete(`/documents/${documentId}`)
   }
 
   async testParser(file: File): Promise<any> {
@@ -113,6 +122,88 @@ class ApiClient {
     const response = await this.client.post<any>('/chat', { question })
     return response.data
   }
+  
+  async chatStream(
+  question: string,
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal,
+  history: ChatHistoryMessage[] = [],
+): Promise<void> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+
+  if (this.tenantId) headers['x-tenant-id'] = this.tenantId
+
+  const res = await fetch(`${BASE_URL}/chat/stream`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ question, history }),
+    signal,
+  })
+
+  if (!res.ok || !res.body) {
+    let detail = `Request failed (${res.status})`
+    try {
+      const body = await res.json()
+      if (typeof body?.detail === 'string') detail = body.detail
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(detail)
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const dispatch = (frame: string) => {
+    let event = 'message'
+    const data: string[] = []
+
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim()
+      else if (line.startsWith('data:')) {
+        data.push(line.slice(5).replace(/^ /, ''))
+      }
+    }
+
+    if (!data.length) return
+
+    const payload = JSON.parse(data.join('\n'))
+
+    if (event === 'sources') handlers.onSources?.(payload)
+    else if (event === 'token') handlers.onToken(payload)
+    else if (event === 'error') throw new Error(payload)
+  }
+
+  for (;;) {
+    const { done, value } = await reader.read()
+
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n')
+
+    let idx: number
+
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      dispatch(buffer.slice(0, idx))
+      buffer = buffer.slice(idx + 2)
+    }
+
+    if (done) break
+  }
+
+  if (buffer.trim()) dispatch(buffer)
+  }
+}
+
+export interface ChatHistoryMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface ChatStreamHandlers {
+  onSources?: (sources: Source[]) => void
+  onToken: (text: string) => void
 }
 
 export const api = new ApiClient()
@@ -120,6 +211,14 @@ export const api = new ApiClient()
 export interface Tenant {
   tenant_id: string
   name: string
+}
+
+export interface TenantListResponse{
+  items: Tenant[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
 }
 
 export interface DocumentOut {
@@ -141,8 +240,9 @@ export interface DocumentListItem extends DocumentOut {
 export interface DocumentListResponse {
   items: DocumentListItem[]
   total: number
-  limit: number
-  offset: number
+  page: number
+  page_size: number
+  total_pages: number
 }
 
 export interface UploadResponse {

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { api } from '../api/client'
-import type { Source } from '../api/client'
+import type { ChatHistoryMessage, Source } from '../api/client'
 import { MarkdownParser } from '../components/MarkdownParser'
 import { SourceCitation } from '../components/SourceCitation'
 import { TenantGuard } from '../components/TenantGuard'
@@ -15,6 +14,7 @@ interface Message {
   sources?: Source[]
   error?: boolean
   question?: string
+  streaming?: boolean
 }
 
 const SUGGESTIONS = [
@@ -29,9 +29,15 @@ const Sparkle = () => (
   </svg>
 )
 
+// Completed turns only: no errors, nothing still streaming, no question left unanswered
+function toHistory(msgs: Message[]): ChatHistoryMessage[] {
+  const done = msgs.filter((m) => !m.error && !m.streaming && m.content)
+  return done
+    .filter((m, i) => m.role === 'assistant' || done[i + 1]?.role === 'assistant')
+    .map((m) => ({ role: m.role, content: m.content }))
+}
+
 function errorText(err: unknown) {
-  const detail = (err as any)?.response?.data?.detail
-  if (typeof detail === 'string') return detail
   return err instanceof Error ? err.message : 'Something went wrong'
 }
 
@@ -43,17 +49,23 @@ export default function Chat() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const nextId = useRef(1)
 
-  const chatMutation = useMutation({ mutationFn: (q: string) => api.chat(q) })
-  const pending = chatMutation.isPending
+  const abortRef = useRef<AbortController | null>(null)
+  const [pending, setPending] = useState(false)
+  // Pending covers the whole stream; "thinking" is only the wait before the first token
+  const lastMsg = messages[messages.length - 1]
+  const thinking = pending && !(lastMsg?.role === 'assistant' && lastMsg.streaming)
 
   // New workspace = new conversation
   useEffect(() => {
+    abortRef.current?.abort()
     setMessages([])
   }, [tenantId])
 
+  useEffect(() => () => abortRef.current?.abort(), [])
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages, pending])
+  }, [messages, thinking])
 
   useEffect(() => {
     const el = inputRef.current
@@ -62,40 +74,63 @@ export default function Chat() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }, [question])
 
+  const run = async (q: string, prior: Message[]) => {
+    const controller = new AbortController()
+    abortRef.current = controller
+    const id = nextId.current++
+    let created = false
+    const patch = (fn: (m: Message) => Message) =>
+      setMessages((all) => all.map((x) => (x.id === id ? fn(x) : x)))
+    const ensure = () => {
+      if (created) return
+      created = true
+      setMessages((all) => [...all, { id, role: 'assistant', content: '', streaming: true }])
+    }
+
+    setPending(true)
+    try {
+      await api.chatStream(
+        q,
+        {
+          onSources: (sources) => {
+            ensure()
+            patch((m) => ({ ...m, sources }))
+          },
+          onToken: (t) => {
+            ensure()
+            patch((m) => ({ ...m, content: m.content + t }))
+          },
+        },
+        controller.signal,
+        toHistory(prior),
+      )
+      if (created) patch((m) => ({ ...m, streaming: false }))
+    } catch (err) {
+      if (controller.signal.aborted) return
+      const failure: Message = { id, role: 'assistant', content: errorText(err), error: true, question: q }
+      if (created) patch(() => failure)
+      else setMessages((all) => [...all, failure])
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null
+        setPending(false)
+      }
+    }
+  }
+
   const ask = (text: string) => {
     const q = text.trim()
     if (!q || pending) return
     setQuestion('')
     setMessages((m) => [...m, { id: nextId.current++, role: 'user', content: q }])
-    chatMutation.mutate(q, {
-      onSuccess: (res) =>
-        setMessages((m) => [
-          ...m,
-          { id: nextId.current++, role: 'assistant', content: res.answer, sources: res.sources },
-        ]),
-      onError: (err) =>
-        setMessages((m) => [
-          ...m,
-          { id: nextId.current++, role: 'assistant', content: errorText(err), error: true, question: q },
-        ]),
-    })
+    run(q, messages)
   }
 
   const retry = (msg: Message) => {
     if (!msg.question) return
     setMessages((m) => m.filter((x) => x.id !== msg.id))
-    chatMutation.mutate(msg.question, {
-      onSuccess: (res) =>
-        setMessages((m) => [
-          ...m,
-          { id: nextId.current++, role: 'assistant', content: res.answer, sources: res.sources },
-        ]),
-      onError: (err) =>
-        setMessages((m) => [
-          ...m,
-          { id: nextId.current++, role: 'assistant', content: errorText(err), error: true, question: msg.question },
-        ]),
-    })
+    // everything before the failed question is its history
+    run(msg.question, messages.slice(0, messages.findIndex((x) => x.id === msg.id)))
   }
 
   const copy = async (text: string) => {
@@ -202,6 +237,7 @@ export default function Chat() {
                             </div>
                           </div>
                         )}
+                        {!msg.streaming && (
                         <button
                           type="button"
                           onClick={() => copy(msg.content)}
@@ -209,6 +245,7 @@ export default function Chat() {
                         >
                           Copy
                         </button>
+                        )}
                       </>
                     )}
                   </div>
@@ -216,7 +253,7 @@ export default function Chat() {
               ),
             )}
 
-            {pending && (
+            {thinking && (
               <div className="flex gap-3">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100">
                   <Sparkle />
@@ -251,7 +288,7 @@ export default function Chat() {
                 onKeyDown={onKeyDown}
                 maxLength={2000}
                 placeholder="Ask a question about your documents…"
-                className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-slate-900 outline-none! placeholder:text-slate-400"
               />
               <button
                 type="submit"

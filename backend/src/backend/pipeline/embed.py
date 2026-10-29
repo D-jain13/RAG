@@ -18,10 +18,7 @@ async def embed_stage(document_id: uuid.UUID) -> bool:
     Resumable: a retry only picks up chunks whose embedding is still NULL.
     Returns True if the document ended up `indexed`.
     """
-    # The embedder reads its Cloudflare credentials from the environment at import.
-    from dotenv import load_dotenv
-
-    load_dotenv()
+    
     from backend.embeddings import embedding
 
     async with AsyncSessionLocal() as db:
