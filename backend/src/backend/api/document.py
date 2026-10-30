@@ -129,7 +129,7 @@ async def list_documents(
             select(Document)
             .where(*filters)
             .order_by(Document.created_at.desc(), Document.id.desc())
-            .limit(page)
+            .limit(page_size)
             .offset((page-1) * page_size)
         )
     ).scalars().all()
